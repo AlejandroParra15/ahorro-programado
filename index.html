@@ -111,12 +111,9 @@
     <div class="pair-row">
       <span class="dot" id="syncDot"></span>
       <span class="pair-status" id="syncStatus">Solo en este dispositivo</span>
-      <span style="flex:1"></span>
-      <button class="btn primary" id="btnCrear">Crear nuestro reto</button>
-      <button class="btn ghost" id="btnMostrarCodigo">Tengo un código</button>
     </div>
-    <div class="codebox hidden" id="codeBox">
-      <input id="codeInput" placeholder="Pega aquí el código de tu pareja" />
+    <div class="codebox" id="codeBox" style="margin-top:8px;">
+      <input id="codeInput" placeholder="Código del reto (ej: DV07)" />
       <button class="btn primary" id="btnConectar">Conectar</button>
     </div>
     <div class="pair-row mb12 hidden" id="connectedBox" style="margin-top:10px;">
@@ -241,7 +238,15 @@
 /* ===== Constantes ===== */
 var VALOR=1000, TOTAL=200, META=20000000, TABLERO_TOTAL=20100000;
 var EA=0.0925, I_MES=Math.pow(1+EA,1/12)-1, I_DIA=Math.pow(1+EA,1/365)-1;
-var BLOB_API='https://jsonblob.com/api/jsonBlob';
+// === BASE DE DATOS (Firebase Realtime Database) ===
+// Puedes dejarlo vacío: la primera vez la app te pedirá pegar la URL (y se comparte en el enlace).
+var FIREBASE_URL="https://reto-ahorro-7bbd-default-rtdb.firebaseio.com";
+function getDB(){
+  var u=(FIREBASE_URL||"").trim();
+  if(!u){ try{ u=(localStorage.getItem('reto_db')||"").trim(); }catch(e){} }
+  return u;
+}
+function dbURL(c){ return getDB().replace(/\/+$/,'') + "/retos/" + encodeURIComponent(c) + ".json"; }
 var SEMILLA_YO=[18,30,37,51,105,200];
 var SEMILLA_ELLA=[5,8,32,35,47,50,98,128,150];
 var DEL='__del__';
@@ -295,7 +300,10 @@ function entrar(){
   state.nombres[pickRole]=name; pendingNombres[pickRole]=name;
   persona=pickRole;
   $('idModal').classList.add('hidden');
-  saveLocal(); renderAll(); schedulePush(true);
+  saveLocal(); renderAll();
+  var cc=($('codeInput').value||'').trim();
+  if(cc && !codigo){ conectarCodigo(cc); }
+  else if(codigo){ schedulePush(true); }
 }
 function renderMe(){
   if(mySession) $('meTag').textContent='Soy '+mySession.name+' ('+(mySession.role==='yo'?'azul':'rosa')+') ✎';
@@ -307,10 +315,10 @@ function setSyncStatus(connected, txt){
   $('syncDot').className='dot'+(connected?' on':'');
   $('syncStatus').innerHTML=txt;
   if(connected){
-    $('btnCrear').classList.add('hidden'); $('btnMostrarCodigo').classList.add('hidden'); $('codeBox').classList.add('hidden');
+    $('codeBox').classList.add('hidden');
     $('connectedBox').classList.remove('hidden'); $('codePill').textContent='código: '+codigo;
   }else{
-    $('connectedBox').classList.add('hidden'); $('btnCrear').classList.remove('hidden'); $('btnMostrarCodigo').classList.remove('hidden');
+    $('connectedBox').classList.add('hidden'); $('codeBox').classList.remove('hidden');
   }
 }
 function stamp(){ $('lastSync').textContent='sincronizado '+new Date().toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'}); }
@@ -341,7 +349,7 @@ async function syncTick(force){
   syncing=true;
   try{
     var remote=null;
-    try{ var r=await fetch(BLOB_API+'/'+codigo,{headers:{'Accept':'application/json'}}); if(r.ok) remote=await r.json(); }catch(e){}
+    try{ var r=await fetch(dbURL(codigo),{headers:{'Accept':'application/json'}}); if(r.ok) remote=await r.json(); }catch(e){}
     var merged=mergeRemote(remote);
     if(mySession) merged.presence[mySession.id]={name:mySession.name,role:mySession.role,t:Date.now()};
     prunePresence(merged.presence);
@@ -350,7 +358,7 @@ async function syncTick(force){
     var ps=presSig(state); if(ps!==lastPresSig){ lastPresSig=ps; renderPresence(); }
     if(force || hasPending() || (Date.now()-lastHeartbeat)>10000){
       try{
-        await fetch(BLOB_API+'/'+codigo,{method:'PUT',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(state)});
+        await fetch(dbURL(codigo),{method:'PUT',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(state)});
         pendingMarks={}; pendingNombres={}; dirtyNu=false; dirtyFecha=false; lastHeartbeat=Date.now(); stamp();
       }catch(e){}
     }
@@ -359,28 +367,27 @@ async function syncTick(force){
 function schedulePush(now){ if(!codigo)return; clearTimeout(pushTimer); pushTimer=setTimeout(function(){syncTick(true);}, now?60:600); }
 function startPoll(){ clearInterval(pollTimer); pollTimer=setInterval(function(){syncTick(false);},4000); }
 
-async function crearCodigo(){
-  if(!mySession){ openModal(); return; }
-  $('syncStatus').textContent='Creando...';
-  try{
-    var res=await fetch(BLOB_API,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(state)});
-    var id=res.headers.get('X-jsonblob'); if(!id){var loc=res.headers.get('Location'); if(loc)id=loc.split('/').pop();}
-    if(!id) throw new Error('sin-id');
-    codigo=id; saveLocal(); location.hash='#'+codigo;
-    setSyncStatus(true,'Conectados <small>(se actualiza solo)</small>');
-    startPoll(); syncTick(true);
-  }catch(e){ $('syncStatus').textContent='No se pudo crear. Revisa tu internet e intenta de nuevo.'; }
-}
 async function conectarCodigo(c){
-  c=(c||'').trim().replace(/^#/,'').split('/').pop(); if(!c)return;
+  c=(c||'').trim().replace(/^#/,'').split('|')[0];
+  if(!c) return;
+  if(!mySession){ openModal(); return; }
+  if(location.protocol==='file:'){ $('syncStatus').textContent='Ábrela desde el enlace publicado (https), no desde el archivo.'; return; }
+  if(!getDB()){
+    var db=(prompt('Pega la URL de tu base de datos Firebase\n(ej: https://reto-xxxx-default-rtdb.firebaseio.com):')||'').trim();
+    if(!db){ $('syncStatus').textContent='Falta la URL de la base de datos para sincronizar.'; return; }
+    try{ localStorage.setItem('reto_db', db); }catch(e){}
+  }
   $('syncStatus').textContent='Conectando...';
-  try{
-    var r=await fetch(BLOB_API+'/'+c,{headers:{'Accept':'application/json'}}); if(!r.ok)throw new Error('404');
-    var remote=await r.json();
-    codigo=c; var merged=mergeRemote(remote); state=merged; saveLocal(); location.hash='#'+codigo;
-    setSyncStatus(true,'Conectados <small>(se actualiza solo)</small>');
-    renderAll(); startPoll(); syncTick(true);
-  }catch(e){ $('syncStatus').textContent='Código no encontrado. Verifícalo con tu pareja.'; }
+  var r;
+  try{ r=await fetch(dbURL(c),{headers:{'Accept':'application/json'}}); }
+  catch(e){ $('syncStatus').textContent='Sin conexión. Revisa tu internet.'; return; }
+  if(!r.ok){ $('syncStatus').textContent='No conecta. Revisa la URL y que las reglas de la base permitan lectura/escritura.'; return; }
+  var remote=await r.json(); // null si el código es nuevo
+  codigo=c; saveLocal();
+  location.hash='#'+codigo+'|'+encodeURIComponent(getDB());
+  if(remote){ state=mergeRemote(remote); saveLocal(); }
+  setSyncStatus(true,'Conectados <small>(se actualiza solo)</small>');
+  renderAll(); startPoll(); syncTick(true);
 }
 
 /* ===== Render: tablero ===== */
@@ -554,8 +561,6 @@ $('inSaldo').oninput=function(){ state.nu.saldo=parseMonto(this.value); dirtyNu=
 $('inRend').oninput=function(){ state.nu.rend=parseMonto(this.value); dirtyNu=true; renderNu(); saveLocal(); schedulePush(); };
 $('inAporte').oninput=function(){ state.nu.aporte=this.value===''?null:parseMonto(this.value); dirtyNu=true; renderNu(); saveLocal(); schedulePush(); };
 $('btnSnap').onclick=function(){ var s=parseMonto($('snapSaldo').value); if(!s)return; state.nu.snapshots.push({id:Date.now(),fecha:$('snapFecha').value||hoyISO(),saldo:s}); dirtyNu=true; $('snapSaldo').value=''; renderNu(); saveLocal(); schedulePush(); };
-$('btnCrear').onclick=crearCodigo;
-$('btnMostrarCodigo').onclick=function(){ $('codeBox').classList.toggle('hidden'); };
 $('btnConectar').onclick=function(){ conectarCodigo($('codeInput').value); };
 $('btnCopiar').onclick=function(){ navigator.clipboard.writeText(location.href).then(function(){ $('btnCopiar').textContent='¡Copiado!'; setTimeout(function(){$('btnCopiar').textContent='Copiar enlace';},1500); }); };
 $('meTag').onclick=openModal;
@@ -570,13 +575,18 @@ document.addEventListener('visibilitychange',function(){ if(!document.hidden) sy
   $('snapFecha').value=hoyISO();
   loadId(); loadLocal();
   if(mySession) persona=mySession.role;
-  var hash=location.hash.replace('#','').trim();
+  // El enlace puede traer "#CODIGO|URL_DB"; guardamos la URL de la base si viene.
+  var raw=location.hash.replace('#','').trim();
+  var hashCode="", hashDb="";
+  if(raw){ var parts=raw.split('|'); hashCode=(parts[0]||'').trim(); if(parts[1]){ try{ hashDb=decodeURIComponent(parts[1]); }catch(e){ hashDb=parts[1]; } } }
+  if(hashDb){ try{ localStorage.setItem('reto_db', hashDb.trim()); }catch(e){} }
   var savedCode=null; try{savedCode=localStorage.getItem('reto_codigo');}catch(e){}
+  var startCode = hashCode || savedCode || "";
+  if(startCode) $('codeInput').value=startCode;
   renderAll();
-  if(hash){ conectarCodigo(hash); }
-  else if(savedCode){ conectarCodigo(savedCode); }
+  if(!mySession){ openModal(); }
+  else if(startCode){ conectarCodigo(startCode); }
   else { setSyncStatus(false,'Solo en este dispositivo'); }
-  if(!mySession) openModal();
 })();
 </script>
 </body>
