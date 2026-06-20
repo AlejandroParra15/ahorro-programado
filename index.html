@@ -280,7 +280,7 @@ function genId(){return Math.random().toString(36).slice(2,8)+Date.now().toStrin
 
 /* ===== Persistencia local ===== */
 function saveLocal(){ try{ localStorage.setItem('reto_state',JSON.stringify(state)); if(codigo)localStorage.setItem('reto_codigo',codigo); }catch(e){} }
-function loadLocal(){ try{var s=localStorage.getItem('reto_state'); if(s){var p=JSON.parse(s); state=Object.assign(defaultState(),p); if(!state.presence)state.presence={};}}catch(e){} }
+function loadLocal(){ try{var s=localStorage.getItem('reto_state'); if(s){var p=JSON.parse(s); state=Object.assign(defaultState(),p); state.nu=Object.assign(defaultNu(),state.nu||{}); if(!state.presence)state.presence={};}}catch(e){} }
 function loadId(){ try{var s=localStorage.getItem('reto_me'); if(s)mySession=JSON.parse(s);}catch(e){} }
 function saveId(){ try{localStorage.setItem('reto_me',JSON.stringify(mySession));}catch(e){} }
 
@@ -331,7 +331,7 @@ function mergeRemote(remote){
   m.nombres=Object.assign(defaultNombres(), remote.nombres||{});
   for(var nk in pendingNombres){ m.nombres[nk]=pendingNombres[nk]; }
   m.fechaFin = dirtyFecha ? state.fechaFin : (remote.fechaFin||'2026-12-03');
-  m.nu = dirtyNu ? state.nu : (remote.nu||defaultNu());
+  m.nu = dirtyNu ? state.nu : Object.assign(defaultNu(), remote.nu||{});
   m.presence = Object.assign({}, remote.presence||{});
   return m;
 }
@@ -502,7 +502,7 @@ function drawProy(p){
               y:{ticks:{color:'#9A8490',font:{size:10},callback:function(v){return pesosCorto(v);}},grid:{color:'#F0D3E0'}}}}
   });
 }
-function histArr(){ return state.nu.snapshots.slice().sort(function(a,b){return a.fecha.localeCompare(b.fecha);}); }
+function histArr(){ return (state.nu.snapshots||[]).slice().sort(function(a,b){return a.fecha.localeCompare(b.fecha);}); }
 function drawHist(){
   var arr=histArr();
   if(arr.length<2){ $('histBox').classList.add('hidden'); if(histChart){histChart.destroy();histChart=null;} return; }
@@ -518,7 +518,7 @@ function drawHist(){
 }
 function renderSnapList(){
   var list=$('snapList'); list.innerHTML='';
-  if(state.nu.snapshots.length===0){ list.innerHTML='<div class="mini">Aún no has anotado saldos. Cada semana abre Nu, mira el total y anótalo aquí para ver la curva crecer. 📈</div>'; return; }
+  if(!state.nu.snapshots || state.nu.snapshots.length===0){ list.innerHTML='<div class="mini">Aún no has anotado saldos. Cada semana abre Nu, mira el total y anótalo aquí para ver la curva crecer. 📈</div>'; return; }
   state.nu.snapshots.slice().sort(function(a,b){return b.fecha.localeCompare(a.fecha);}).forEach(function(s){
     var div=document.createElement('div'); div.className='snap';
     var f=new Date(s.fecha+'T00:00:00').toLocaleDateString('es-CO',{day:'2-digit',month:'long'});
