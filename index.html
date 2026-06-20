@@ -365,7 +365,7 @@ async function syncTick(force){
   } finally { syncing=false; }
 }
 function schedulePush(now){ if(!codigo)return; clearTimeout(pushTimer); pushTimer=setTimeout(function(){syncTick(true);}, now?60:600); }
-function startPoll(){ clearInterval(pollTimer); pollTimer=setInterval(function(){syncTick(false);},4000); }
+function startPoll(){ clearInterval(pollTimer); pollTimer=setInterval(function(){syncTick(false);},1000); }
 
 async function conectarCodigo(c){
   c=(c||'').trim().replace(/^#/,'').split('|')[0];
